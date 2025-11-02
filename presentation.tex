@@ -1,0 +1,254 @@
+\documentclass[10pt]{beamer}
+
+% Theme settings
+\usetheme{CambridgeUS}
+\usecolortheme{default}
+\usefonttheme{professionalfonts}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+
+% Packages
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{ragged2e}
+
+% Metadata
+\title[Firecracker vs Docker]{\textbf{Firecracker MicroVM vs Docker Container: A Benchmarking Study}}
+\subtitle[OS Project]{Operating Systems Course Project}
+\author[030, 047, 154]{202351030 \\ 202351047 \\ 202351154}
+\institute[IIIT-V]{IIIT Vadodara \\ Gandhinagar Campus}
+\date{November 2025}
+
+\begin{document}
+
+% ---------------------------
+% Title Slide
+% ---------------------------
+\begin{frame}
+  \titlepage
+  \vfill
+  \tiny Benchmarking cold start performance and resource usage between Docker containers and Firecracker microVMs.
+\end{frame}
+
+% ---------------------------
+% Problem Statement
+% ---------------------------
+\begin{frame}{Problem Statement}
+\justifying
+\begin{itemize}
+    \item \textbf{Problem:} Understanding performance trade-offs between traditional containerization (Docker) and lightweight virtualization (Firecracker)
+    \item \textbf{Objectives:}
+    \begin{itemize}
+        \item Compare cold start times
+        \item Measure CPU and memory resource usage
+        \item Identify use-case specific advantages
+    \end{itemize}
+    \item \textbf{Technology Used:} 
+    \begin{itemize}
+        \item Docker Engine for containerization
+        \item Firecracker v1.7.0 for microVMs
+        \item Python for benchmarking automation
+        \item KVM for hardware virtualization
+    \end{itemize}
+    \item \textbf{Motivation:} Modern cloud workloads require both fast startup times and strong isolation. Understanding when to use containers vs microVMs is crucial for optimizing serverless and multi-tenant environments.
+\end{itemize}
+\end{frame}
+
+% ---------------------------
+% System Architecture
+% ---------------------------
+\begin{frame}{System Architecture}
+\begin{center}
+\includegraphics[width=0.8\textwidth]{0.png}
+\end{center}
+\vspace{-3mm}
+\footnotesize
+Automated benchmarking workflow: User provides application → System builds/spawns both Docker container and Firecracker microVM → Runs cold start \& resource monitoring tests → Generates comparison report
+\end{frame}
+
+% ---------------------------
+% Implementation Setup
+% ---------------------------
+\begin{frame}{Implementation Setup}
+\justifying
+\begin{itemize}
+    \item \textbf{Test Environment:}
+    \begin{itemize}
+        \item OS: WSL2 (Ubuntu) with KVM support
+        \item Docker Engine v24.0+
+        \item Firecracker v1.7.0
+        \item Python 3.9+ with docker, requests, psutil libraries
+    \end{itemize}
+    
+    \item \textbf{Benchmark Components:}
+    \begin{itemize}
+        \item Cold start test: Simple Python HTTP server (port 8080)
+        \item Resource monitoring: 10-second observation period
+        \item Sample rate: 0.5 seconds (20 samples)
+    \end{itemize}
+    
+    \item \textbf{Firecracker Configuration:}
+    \begin{itemize}
+        \item 1 vCPU, 512MB RAM
+        \item Ubuntu 18.04 rootfs with custom init script
+        \item TAP network interface (172.16.0.2/24)
+    \end{itemize}
+\end{itemize}
+\end{frame}
+
+% ---------------------------
+% Cold Start Results
+% ---------------------------
+\begin{frame}{Results – Cold Start Performance}
+\begin{center}
+\includegraphics[width=0.75\textwidth]{coldstart_comparison.png}
+\end{center}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Technology} & \textbf{Startup Time} & \textbf{Performance} \\
+\midrule
+Docker Container & 2.87 - 4.43 seconds & Baseline \\
+Firecracker microVM & 1.84 - 0.64 seconds & \textbf{1.55-6.9x faster} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\vspace{3mm}
+\footnotesize
+\textbf{Key Finding:} Firecracker achieves significantly faster cold starts due to direct kernel boot without container runtime overhead.
+\end{frame}
+
+% ---------------------------
+% Resource Usage Results
+% ---------------------------
+\begin{frame}{Results – Resource Usage}
+\begin{center}
+\includegraphics[width=0.75\textwidth]{resource_comparison.png}
+\end{center}
+
+\begin{table}[h]
+\centering
+\footnotesize
+\begin{tabular}{lccc}
+\toprule
+\textbf{Metric} & \textbf{Docker} & \textbf{Firecracker} & \textbf{Difference} \\
+\midrule
+Avg CPU Usage & 0-5\% & 0.98-3.00\% & Comparable \\
+Avg Memory & 0-46 MB & 58-59 MB & +28\% (Firecracker) \\
+Peak Memory & 0-52 MB & 58-59 MB & +15\% (Firecracker) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\vspace{3mm}
+\footnotesize
+\textbf{Key Finding:} Docker containers have lower memory footprint due to shared kernel, while Firecracker includes guest OS overhead but provides VM-level isolation.
+\end{frame}
+
+% ---------------------------
+% Trade-offs Analysis
+% ---------------------------
+\begin{frame}{Analysis – Technology Trade-offs}
+\justifying
+
+\begin{columns}[T]
+\column{0.48\textwidth}
+\textbf{Docker Containers:}
+\begin{itemize}
+    \item[+] Lower memory usage
+    \item[+] Mature ecosystem
+    \item[+] Better tooling support
+    \item[−] Slower cold starts
+    \item[−] Process-level isolation
+\end{itemize}
+
+\column{0.48\textwidth}
+\textbf{Firecracker microVMs:}
+\begin{itemize}
+    \item[+] \textbf{1.5-6.9x faster startup}
+    \item[+] VM-level isolation
+    \item[+] Enhanced security
+    \item[−] Higher memory footprint
+    \item[−] More complex setup
+\end{itemize}
+\end{columns}
+
+\vspace{5mm}
+\textbf{Use Case Recommendations:}
+\begin{itemize}
+    \item \textbf{Serverless/FaaS:} Firecracker (fast cold starts critical)
+    \item \textbf{Multi-tenant workloads:} Firecracker (stronger isolation)
+    \item \textbf{Resource-constrained environments:} Docker (lower memory)
+    \item \textbf{Traditional microservices:} Docker (ecosystem maturity)
+\end{itemize}
+\end{frame}
+
+% ---------------------------
+% Conclusion
+% ---------------------------
+\begin{frame}{Conclusion}
+\justifying
+\begin{itemize}
+    \item \textbf{Key Contributions:}
+    \begin{itemize}
+        \item Automated benchmarking tool for fair comparison
+        \item Quantified cold start performance: Firecracker 1.5-6.9x faster
+        \item Measured resource overhead: Firecracker uses ~28\% more memory
+        \item Provided use-case specific recommendations
+    \end{itemize}
+    
+    \item \textbf{Limitations:}
+    \begin{itemize}
+        \item Tests conducted on single machine configuration
+        \item Limited to HTTP server workloads
+        \item Docker monitoring compatibility issues in WSL2
+        \item Network overhead not extensively tested
+    \end{itemize}
+    
+    \item \textbf{Future Work:}
+    \begin{itemize}
+        \item Benchmark diverse workloads (CPU-intensive, I/O-bound)
+        \item Test on bare-metal systems and cloud platforms
+        \item Add security isolation benchmarks
+        \item Implement automated stress testing with varying loads
+    \end{itemize}
+\end{itemize}
+\end{frame}
+
+% ---------------------------
+% References
+% ---------------------------
+\begin{frame}{References}
+\footnotesize
+\begin{thebibliography}{99}
+\bibitem{firecracker} Firecracker Documentation, \url{https://firecracker-microvm.github.io/}
+\bibitem{docker} Docker Documentation, \url{https://docs.docker.com/}
+\bibitem{agache2020} Agache et al., "Firecracker: Lightweight Virtualization for Serverless Applications", NSDI 2020
+\bibitem{psutil} psutil Library, \url{https://github.com/giampaolo/psutil}
+\bibitem{repo} Project Repository: \url{https://github.com/thedevyashsaini/OS_Project_2025}
+\end{thebibliography}
+\end{frame}
+
+% ---------------------------
+% Thank You
+% ---------------------------
+\begin{frame}
+\begin{center}
+\Huge Thank You!
+
+\vspace{10mm}
+
+\Large Questions?
+
+\vspace{15mm}
+
+\normalsize
+\textbf{GitHub:} \url{https://github.com/thedevyashsaini/OS_Project_2025}
+\end{center}
+\end{frame}
+
+\end{document}
