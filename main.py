@@ -5,7 +5,7 @@ import subprocess
 import docker
 import requests
 import json
-import socket
+import psutil
 
 DEFAULT_DOCKERFILE = """
 FROM python:3.9-slim
@@ -74,7 +74,7 @@ def download_firecracker_assets():
     os.makedirs(cache_dir, exist_ok=True)
     
     kernel_url = "https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/kernels/vmlinux.bin"
-    rootfs_url = "https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/rootfs/bionic.rootfs.ext4"
+    rootfs_url = "https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/rootfs/bionic.rootfs.ext4" # rn locally I'm using custom build rootfs with python baked in, so... uk...
     
     # Use cached paths
     kernel_path = os.path.join(cache_dir, "vmlinux.bin")
@@ -295,12 +295,220 @@ def measure_firecracker_startup(workdir):
     
     return startup_time
 
+def monitor_docker_resources(container, duration=10):
+    """Monitor CPU and memory usage of a Docker container"""
+    print(f"Monitoring Docker container resources for {duration} seconds...")
+    
+    cpu_samples = []
+    memory_samples = []
+    container_id = container.id[:12]  # Use short ID
+    
+    start_time = time.time()
+    sample_count = 0
+    
+    while time.time() - start_time < duration:
+        try:
+            # Use docker stats command for better compatibility
+            result = subprocess.run(
+                ["docker", "stats", "--no-stream", "--format", "{{.CPUPerc}},{{.MemUsage}}", container_id],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            
+            if result.returncode == 0 and result.stdout.strip():
+                output = result.stdout.strip()
+                sample_count += 1
+                
+                # Format: "1.23%,45.67MiB / 512MiB"
+                parts = output.split(',')
+                
+                # Parse CPU percentage
+                if len(parts) > 0:
+                    cpu_str = parts[0].replace('%', '').strip()
+                    try:
+                        cpu_percent = float(cpu_str)
+                        cpu_samples.append(cpu_percent)
+                    except ValueError:
+                        pass
+                
+                # Parse memory usage
+                if len(parts) > 1:
+                    mem_str = parts[1].split('/')[0].strip()
+                    # Convert to MB
+                    try:
+                        if 'GiB' in mem_str:
+                            memory_mb = float(mem_str.replace('GiB', '').strip()) * 1024
+                        elif 'MiB' in mem_str:
+                            memory_mb = float(mem_str.replace('MiB', '').strip())
+                        elif 'KiB' in mem_str:
+                            memory_mb = float(mem_str.replace('KiB', '').strip()) / 1024
+                        else:
+                            # Try without unit suffix
+                            memory_mb = float(mem_str.replace('B', '').strip()) / (1024 * 1024)
+                        
+                        memory_samples.append(memory_mb)
+                    except (ValueError, AttributeError):
+                        pass
+            
+        except (subprocess.TimeoutExpired, Exception) as e:
+            pass  # Silent fail, keep trying
+        
+        time.sleep(0.5)
+    
+    print(f"Collected {sample_count} samples ({len(cpu_samples)} CPU, {len(memory_samples)} memory)")
+    
+    avg_cpu = sum(cpu_samples) / len(cpu_samples) if cpu_samples else 0
+    avg_memory = sum(memory_samples) / len(memory_samples) if memory_samples else 0
+    max_memory = max(memory_samples) if memory_samples else 0
+    
+    return {
+        'avg_cpu': avg_cpu,
+        'avg_memory': avg_memory,
+        'max_memory': max_memory
+    }
+
+def monitor_firecracker_resources(process_pid, duration=10):
+    """Monitor CPU and memory usage of Firecracker process"""
+    print(f"Monitoring Firecracker microVM resources for {duration} seconds...")
+    
+    cpu_samples = []
+    memory_samples = []
+    
+    try:
+        process = psutil.Process(process_pid)
+        start_time = time.time()
+        
+        while time.time() - start_time < duration:
+            try:
+                # Get CPU percentage (interval for accurate measurement)
+                cpu_percent = process.cpu_percent(interval=0.5)
+                
+                # Get memory usage in MB
+                memory_info = process.memory_info()
+                memory_mb = memory_info.rss / (1024 * 1024)
+                
+                cpu_samples.append(cpu_percent)
+                memory_samples.append(memory_mb)
+                
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                break
+        
+        avg_cpu = sum(cpu_samples) / len(cpu_samples) if cpu_samples else 0
+        avg_memory = sum(memory_samples) / len(memory_samples) if memory_samples else 0
+        max_memory = max(memory_samples) if memory_samples else 0
+        
+        return {
+            'avg_cpu': avg_cpu,
+            'avg_memory': avg_memory,
+            'max_memory': max_memory
+        }
+    except Exception as e:
+        print(f"Error monitoring Firecracker: {e}")
+        return {'avg_cpu': 0, 'avg_memory': 0, 'max_memory': 0}
+
+def run_docker_with_monitoring(client, image_tag, duration=10):
+    """Run Docker container and monitor its resources"""
+    print("\nSpawning Docker container for resource monitoring...")
+    
+    container = client.containers.run(
+        image_tag,
+        detach=True,
+        ports={"8080/tcp": 8080}
+    )
+    
+    # Give container a moment to start
+    time.sleep(1)
+    
+    # Check if container is still running
+    container.reload()
+    if container.status != "running":
+        print(f"Warning: Container exited quickly with status: {container.status}")
+        print("This might be a short-lived script rather than a long-running service.")
+        container.remove()
+        return {'avg_cpu': 0, 'avg_memory': 0, 'max_memory': 0}
+    
+    print("Container is running, starting monitoring...")
+    
+    # Monitor resources
+    stats = monitor_docker_resources(container, duration)
+    
+    # Cleanup
+    try:
+        container.stop(timeout=2)
+    except:
+        pass
+    container.remove()
+    
+    return stats
+
+def run_firecracker_with_monitoring(workdir, duration=10):
+    """Run Firecracker microVM and monitor its resources"""
+    print("\nSpawning Firecracker microVM for resource monitoring...")
+    
+    # Download assets if needed
+    kernel_path, base_rootfs_path = download_firecracker_assets()
+    
+    # Create custom rootfs with HTTP server
+    rootfs_path = create_custom_rootfs(base_rootfs_path, workdir)
+    
+    # Create config
+    config_path = create_firecracker_config(workdir, kernel_path, rootfs_path)
+    
+    # Setup network
+    tap_available = setup_tap_device()
+    if not tap_available:
+        print("Warning: TAP device not available, skipping Firecracker test")
+        return None
+    
+    # Create socket path
+    socket_path = os.path.join(workdir, "firecracker.socket")
+    
+    # Start Firecracker in background
+    firecracker_process = subprocess.Popen(
+        ["firecracker", "--api-sock", socket_path, "--config-file", config_path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        stdin=subprocess.PIPE
+    )
+    
+    # Wait for HTTP server to respond
+    health_url = "http://172.16.0.2:8080"
+    for i in range(100):
+        if firecracker_process.poll() is not None:
+            print("Firecracker process exited unexpectedly")
+            return None
+        
+        try:
+            r = requests.get(health_url, timeout=0.5)
+            if r.status_code == 200:
+                print("Firecracker microVM is ready, starting monitoring...")
+                break
+        except Exception:
+            pass
+        
+        time.sleep(0.1)
+    
+    # Monitor resources
+    stats = monitor_firecracker_resources(firecracker_process.pid, duration)
+    
+    # Cleanup
+    firecracker_process.terminate()
+    try:
+        firecracker_process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        firecracker_process.kill()
+    
+    if os.path.exists(socket_path):
+        os.remove(socket_path)
+    
+    return stats
+
 def main():
     repo_url = input("Enter GitHub repo link (leave empty to use default): ").strip()
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Docker benchmark
-        print("\n=== Testing Docker Container ===")
+        # Prepare the application
         if repo_url:
             clone_repo(repo_url, tmpdir)
         else:
@@ -308,18 +516,20 @@ def main():
 
         client = docker.from_env()
         build_docker_image(client, tmpdir)
+        
+        # Run cold start tests (always)
+        print("\n" + "="*50)
+        print("COLD START BENCHMARK")
+        print("="*50)
+        
+        print("\n=== Testing Docker Container ===")
         docker_time = measure_startup_time(client, "test-image:latest")
         
-        # Firecracker benchmark
+        print("\n=== Testing Firecracker microVM ===")
         firecracker_time = measure_firecracker_startup(tmpdir)
         
-        # Cleanup
-        cleanup_tap_device()
-        
-        # Results
-        print("\n" + "="*50)
-        print("BENCHMARK RESULTS")
-        print("="*50)
+        # Display cold start results
+        print("\n--- Cold Start Results ---")
         print(f"Docker Container:     {docker_time:.3f} seconds")
         if firecracker_time:
             print(f"Firecracker microVM:  {firecracker_time:.3f} seconds")
@@ -327,8 +537,47 @@ def main():
             winner = "Firecracker" if speedup > 1 else "Docker"
             print(f"Speed difference:     {abs(speedup):.2f}x faster ({winner})")
         else:
-            print(f"Firecracker microVM:  FAILED (check TAP device setup)")
-        print("="*50)
+            print(f"Firecracker microVM:  FAILED")
+        
+        # If user provided a repo, also run resource monitoring
+        if repo_url:
+            print("\n" + "="*50)
+            print("RESOURCE USAGE BENCHMARK")
+            print("="*50)
+            
+            # Monitor Docker
+            print("\n=== Docker Container Resource Monitoring ===")
+            docker_stats = run_docker_with_monitoring(client, "test-image:latest", duration=10)
+            
+            # Monitor Firecracker
+            print("\n=== Firecracker microVM Resource Monitoring ===")
+            firecracker_stats = run_firecracker_with_monitoring(tmpdir, duration=10)
+            
+            # Display resource results
+            print("\n--- Resource Usage Results ---")
+            print("\nDocker Container:")
+            print(f"  Average CPU:     {docker_stats['avg_cpu']:.2f}%")
+            print(f"  Average Memory:  {docker_stats['avg_memory']:.2f} MB")
+            print(f"  Peak Memory:     {docker_stats['max_memory']:.2f} MB")
+            
+            if firecracker_stats:
+                print("\nFirecracker microVM:")
+                print(f"  Average CPU:     {firecracker_stats['avg_cpu']:.2f}%")
+                print(f"  Average Memory:  {firecracker_stats['avg_memory']:.2f} MB")
+                print(f"  Peak Memory:     {firecracker_stats['max_memory']:.2f} MB")
+                
+                # Compare
+                cpu_diff = ((docker_stats['avg_cpu'] - firecracker_stats['avg_cpu']) / docker_stats['avg_cpu'] * 100) if docker_stats['avg_cpu'] > 0 else 0
+                mem_diff = ((docker_stats['avg_memory'] - firecracker_stats['avg_memory']) / docker_stats['avg_memory'] * 100) if docker_stats['avg_memory'] > 0 else 0
+                
+                print("\nComparison:")
+                print(f"  CPU overhead:    {cpu_diff:+.1f}% (Docker vs Firecracker)")
+                print(f"  Memory overhead: {mem_diff:+.1f}% (Docker vs Firecracker)")
+        
+        # Cleanup
+        cleanup_tap_device()
+        
+        print("\n" + "="*50)
 
 if __name__ == "__main__":
     main()
