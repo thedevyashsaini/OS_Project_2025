@@ -1,0 +1,151 @@
+# Standard .gitignore - common OS, editor, language, and build artifacts
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+.Trashes
+.Spotlight-V100/
+.AppleDouble/
+.LSOverride
+Icon?
+._*
+
+# User-specific
+*.swp
+*~
+*.sublime-workspace
+*.sublime-project
+
+# IDEs / editors
+.vscode/
+.idea/
+*.iml
+*.ipr
+*.iws
+*.class
+*.project
+*.settings/
+*.launch
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp.*
+.pnpm-debug.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+env/
+venv/
+ENV/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.python-version
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Java / JVM
+target/
+*.jar
+*.war
+*.ear
+*.class
+*.log
+hs_err_pid*
+
+# C/C++ / build artifacts
+*.o
+*.obj
+*.so
+*.a
+*.lib
+*.dll
+*.exe
+*.out
+*.elf
+*.dSYM/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+Makefile
+build/
+bin/
+obj/
+*.d
+
+# Go
+bin/
+*.exe
+*.test
+vendor/
+
+# Rust
+/target/
+/**/*.rs.bk
+
+# .NET
+*.user
+*.rsuser
+*.suo
+*.cache
+*.ilk
+*.pdb
+*.exe
+*.dll
+*.app
+.vs/
+
+# Logs and databases
+*.log
+*.sql
+*.sqlite
+*.sqlite3
+
+# Archives and packages
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# Secrets / env
+.env
+.env.local
+.env.*.local
+secrets/
+credentials/
+*.key
+*.pem
+
+# Containers
+.Dockerfile.swp
+docker-compose.override.yml
+.docker/
+
+# Misc
+.idea/
+coverage/
+*.coveragerc
+.vagrant/
+dist/
+build/
